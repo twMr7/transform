@@ -9,6 +9,7 @@
 		Orisol Asia Ltd.
 */
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <fstream>
@@ -17,27 +18,14 @@
 #include <algorithm>
 #include <type_traits>
 #include <typeinfo>
+#include <codecvt>
 #include <Eigen/core>
-
-struct Point3d
-{
-	double x;
-	double y;
-	double z;
-};
 
 struct Point3f
 {
 	float x;
 	float y;
 	float z;
-};
-
-struct Normal3d
-{
-	double nx;
-	double ny;
-	double nz;
 };
 
 struct Normal3f
@@ -47,27 +35,11 @@ struct Normal3f
 	float nz;
 };
 
-struct Angle3d
-{
-	double rx;
-	double ry;
-	double rz;
-};
-
 struct Angle3f
 {
 	float rx;
 	float ry;
 	float rz;
-};
-
-struct Vertex6d
-{
-	Point3d point;
-	union {
-		Normal3d normal;
-		Angle3d angle;
-	};
 };
 
 struct Vertex6f
@@ -78,6 +50,38 @@ struct Vertex6f
 		Angle3f angle;
 	};
 };
+
+#if 1
+struct Point3d
+{
+	double x;
+	double y;
+	double z;
+};
+
+struct Normal3d
+{
+	double nx;
+	double ny;
+	double nz;
+};
+
+struct Angle3d
+{
+	double rx;
+	double ry;
+	double rz;
+};
+
+struct Vertex6d
+{
+	Point3d point;
+	union {
+		Normal3d normal;
+		Angle3d angle;
+	};
+};
+#endif
 
 // Metadata specific for Orisol's use of point cloud
 // besides scan raw data, it is not necessary to be in the form of grid
@@ -96,6 +100,20 @@ struct CloudMeta
 class CloudConvert
 {
 public:
+	// convert from Point3f vector to Matrix3Xf
+	static inline Eigen::Matrix3Xf toMatrix3Xf(const std::vector<Point3f> & pt3fvector)
+	{
+		Eigen::Map<Eigen::Matrix<float, -1, 3, Eigen::RowMajor>> vec2mat((float *)pt3fvector.data(), pt3fvector.size(), 3);
+		return vec2mat.transpose();
+	}
+
+	// convert from Point3f vector to Matrix3Xd
+	static inline Eigen::Matrix3Xd toMatrix3Xd(const std::vector<Point3f> & pt3fvector)
+	{
+		Eigen::Map<Eigen::Matrix<float, -1, 3, Eigen::RowMajor>> vec2mat((float *)pt3fvector.data(), pt3fvector.size(), 3);
+		return vec2mat.cast<double>().transpose();
+	}
+
 	// convert from Point3f vector to MatrixX3f
 	static inline Eigen::MatrixX3f toMatrixX3f(const std::vector<Point3f> & pt3fvector)
 	{
@@ -103,11 +121,34 @@ public:
 		return vec2mat;
 	}
 
-	// convert from Point3d vector to MatrixX3d
-	static inline Eigen::MatrixX3d toMatrixX3d(const std::vector<Point3d> & pt3dvector)
+	// convert from Point3f vector to MatrixX3d
+	static inline Eigen::MatrixX3d toMatrixX3d(const std::vector<Point3f> & pt3fvector)
 	{
-		Eigen::Map<Eigen::Matrix<double, -1, 3, Eigen::RowMajor>> vec2mat((double *)pt3dvector.data(), pt3dvector.size(), 3);
-		return vec2mat;
+		Eigen::Map<Eigen::Matrix<float, -1, 3, Eigen::RowMajor>> vec2mat((float *)pt3fvector.data(), pt3fvector.size(), 3);
+		return vec2mat.cast<double>();
+	}
+
+	// convert from Matrix3Xf to Point3f vector
+	static inline std::vector<Point3f> toPoint3fVector(const Eigen::Matrix3Xf & mat3f)
+	{
+		std::vector<Point3f> mat2vec(mat3f.cols());
+		if (mat3f.IsRowMajor)
+		{
+			Eigen::Matrix<float, 3, -1, Eigen::ColMajor> mat3f_colmajor = mat3f;
+			std::copy(mat3f_colmajor.data(), mat3f_colmajor.data() + mat3f_colmajor.size(), stdext::make_checked_array_iterator((float *)mat2vec.data(), mat3f_colmajor.size()));
+		}
+		else
+		{
+			std::copy(mat3f.data(), mat3f.data() + mat3f.size(), stdext::make_checked_array_iterator((float *)mat2vec.data(), mat3f.size()));
+		}
+		return mat2vec;
+	}
+
+	// convert from Matrix3Xd to Point3f vector
+	static inline std::vector<Point3f> toPoint3fVector(const Eigen::Matrix3Xd & mat3d)
+	{
+		Eigen::Matrix3Xf mat3f = mat3d.cast<float>();
+		return toPoint3fVector(mat3f);
 	}
 
 	// convert from MatrixX3f to Point3f vector
@@ -122,6 +163,148 @@ public:
 		{
 			Eigen::Matrix<float, -1, 3, Eigen::RowMajor> mat3f_rowmajor = mat3f;
 			std::copy(mat3f_rowmajor.data(), mat3f_rowmajor.data() + mat3f_rowmajor.size(), stdext::make_checked_array_iterator((float *)mat2vec.data(), mat3f_rowmajor.size()));
+		}
+		return mat2vec;
+	}
+
+	// convert from MatrixX3d to Point3f vector
+	static inline std::vector<Point3f> toPoint3fVector(const Eigen::MatrixX3d & mat3d)
+	{
+		Eigen::MatrixX3f mat3f = mat3d.cast<float>();
+		return toPoint3fVector(mat3f);
+	}
+
+	static inline std::vector<Vertex6f> mergeToVertex6f(const std::vector<Point3f> & pt3fvector, const std::vector<Normal3f> & n3fvector)
+	{
+		std::vector<Vertex6f> vtx6fvector(pt3fvector.size() <= n3fvector.size() ? pt3fvector.size() : n3fvector.size());
+		if (pt3fvector.size() <= n3fvector.size())
+			std::transform(pt3fvector.cbegin(), pt3fvector.cend(), n3fvector.cbegin(), vtx6fvector.begin(),
+				[] (Point3f pt3f, Normal3f n3f) {
+					return Vertex6f{ pt3f, n3f };
+				});
+		else
+			std::transform(n3fvector.cbegin(), n3fvector.cend(), pt3fvector.cbegin(), vtx6fvector.begin(),
+				[] (Normal3f n3f, Point3f pt3f) {
+					return Vertex6f{ pt3f, n3f };
+				});
+		return vtx6fvector;
+	}
+
+	static inline std::vector<Vertex6f> mergeToVertex6f(const std::vector<Point3f> & pt3fvector, const std::vector<Angle3f> & a3fvector)
+	{
+		std::vector<Vertex6f> vtx6fvector(pt3fvector.size() <= a3fvector.size() ? pt3fvector.size() : a3fvector.size());
+		if (pt3fvector.size() <= a3fvector.size())
+			std::transform(pt3fvector.cbegin(), pt3fvector.cend(), a3fvector.cbegin(), vtx6fvector.begin(),
+				[] (Point3f pt3f, Angle3f a3f) {
+					Vertex6f vtx6f;
+					vtx6f.point = pt3f;
+					vtx6f.angle = a3f;
+					return vtx6f;
+				});
+		else
+			std::transform(a3fvector.cbegin(), a3fvector.cend(), pt3fvector.cbegin(), vtx6fvector.begin(),
+				[] (Angle3f a3f, Point3f pt3f) {
+					Vertex6f vtx6f;
+					vtx6f.point = pt3f;
+					vtx6f.angle = a3f;
+					return vtx6f;
+				});
+		return vtx6fvector;
+	}
+
+	static inline void splitFromVertex6f(const std::vector<Vertex6f> & vtx6fvector, std::vector<Point3f> & pt3fvector, std::vector<Normal3f> & n3fvector)
+	{
+		if (!pt3fvector.empty())
+			pt3fvector.clear();
+		if (!n3fvector.empty())
+			n3fvector.clear();
+		for (const auto & vertex : vtx6fvector)
+		{
+			pt3fvector.push_back(vertex.point);
+			n3fvector.push_back(vertex.normal);
+		}
+	}
+
+	static inline void splitFromVertex6f(const std::vector<Vertex6f> & vtx6fvector, std::vector<Point3f> & pt3fvector, std::vector<Angle3f> & a3fvector)
+	{
+		if (!pt3fvector.empty())
+			pt3fvector.clear();
+		if (!a3fvector.empty())
+			a3fvector.clear();
+		for (const auto & vertex : vtx6fvector)
+		{
+			pt3fvector.push_back(vertex.point);
+			a3fvector.push_back(vertex.angle);
+		}
+	}
+
+	static inline void splitFromVertex6f(const std::vector<Vertex6f> & vtx6fvector, Eigen::Matrix3Xd & position, Eigen::Matrix3Xd & orientation)
+	{
+		std::vector<Point3f> pt3fvector;
+		std::vector<Point3f> a3fvector;
+		for (const auto & vertex : vtx6fvector)
+		{
+			pt3fvector.push_back(vertex.point);
+			a3fvector.push_back(Point3f{ vertex.angle.rx, vertex.angle.ry, vertex.angle.rz });
+		}
+		position = toMatrix3Xd(pt3fvector);
+		orientation = toMatrix3Xd(a3fvector);
+	}
+
+	static inline void splitFromVertex6f(const std::vector<Vertex6f> & vtx6fvector, Eigen::MatrixX3d & position, Eigen::MatrixX3d & orientation)
+	{
+		std::vector<Point3f> pt3fvector;
+		std::vector<Point3f> a3fvector;
+		for (const auto & vertex : vtx6fvector)
+		{
+			pt3fvector.push_back(vertex.point);
+			a3fvector.push_back(Point3f{ vertex.angle.rx, vertex.angle.ry, vertex.angle.rz });
+		}
+		position = toMatrixX3d(pt3fvector);
+		orientation = toMatrixX3d(a3fvector);
+	}
+
+#if 1
+	// convert from Point3d vector to Matrix3Xd
+	static inline Eigen::Matrix3Xd toMatrix3Xd(const std::vector<Point3d> & pt3dvector)
+	{
+		Eigen::Map<Eigen::Matrix<double, -1, 3, Eigen::RowMajor>> vec2mat((double *)pt3dvector.data(), pt3dvector.size(), 3);
+		return vec2mat.transpose();
+	}
+
+	// convert from Point3d vector to Matrix3Xf
+	static inline Eigen::Matrix3Xf toMatrix3Xf(const std::vector<Point3d> & pt3dvector)
+	{
+		Eigen::Map<Eigen::Matrix<double, -1, 3, Eigen::RowMajor>> vec2mat((double *)pt3dvector.data(), pt3dvector.size(), 3);
+		return vec2mat.cast<float>().transpose();
+	}
+
+	// convert from Point3d vector to MatrixX3d
+	static inline Eigen::MatrixX3d toMatrixX3d(const std::vector<Point3d> & pt3dvector)
+	{
+		Eigen::Map<Eigen::Matrix<double, -1, 3, Eigen::RowMajor>> vec2mat((double *)pt3dvector.data(), pt3dvector.size(), 3);
+		return vec2mat;
+	}
+
+	// convert from Point3d vector to MatrixX3f
+	static inline Eigen::MatrixX3f toMatrixX3f(const std::vector<Point3d> & pt3dvector)
+	{
+		Eigen::Map<Eigen::Matrix<double, -1, 3, Eigen::RowMajor>> vec2mat((double *)pt3dvector.data(), pt3dvector.size(), 3);
+		return vec2mat.cast<float>();
+	}
+
+	// convert from Matrix3Xd to Point3d vector
+	static inline std::vector<Point3d> toPoint3dVector(const Eigen::Matrix3Xd & mat3d)
+	{
+		std::vector<Point3d> mat2vec(mat3d.cols());
+		if (mat3d.IsRowMajor)
+		{
+			Eigen::Matrix<double, 3, -1, Eigen::ColMajor> mat3d_colmajor = mat3d;
+			std::copy(mat3d_colmajor.data(), mat3d_colmajor.data() + mat3d_colmajor.size(), stdext::make_checked_array_iterator((double *)mat2vec.data(), mat3d_colmajor.size()));
+		}
+		else
+		{
+			std::copy(mat3d.data(), mat3d.data() + mat3d.size(), stdext::make_checked_array_iterator((double *)mat2vec.data(), mat3d.size()));
 		}
 		return mat2vec;
 	}
@@ -180,44 +363,6 @@ public:
 		return vtx6dvector;
 	}
 
-	static inline std::vector<Vertex6f> mergeToVertex6f(const std::vector<Point3f> & pt3fvector, const std::vector<Normal3f> & n3fvector)
-	{
-		std::vector<Vertex6f> vtx6fvector(pt3fvector.size() <= n3fvector.size() ? pt3fvector.size() : n3fvector.size());
-		if (pt3fvector.size() <= n3fvector.size())
-			std::transform(pt3fvector.cbegin(), pt3fvector.cend(), n3fvector.cbegin(), vtx6fvector.begin(),
-				[] (Point3f pt3f, Normal3f n3f) {
-					return Vertex6f{ pt3f, n3f };
-				});
-		else
-			std::transform(n3fvector.cbegin(), n3fvector.cend(), pt3fvector.cbegin(), vtx6fvector.begin(),
-				[] (Normal3f n3f, Point3f pt3f) {
-					return Vertex6f{ pt3f, n3f };
-				});
-		return vtx6fvector;
-	}
-
-	static inline std::vector<Vertex6f> mergeToVertex6f(const std::vector<Point3f> & pt3fvector, const std::vector<Angle3f> & a3fvector)
-	{
-		std::vector<Vertex6f> vtx6fvector(pt3fvector.size() <= a3fvector.size() ? pt3fvector.size() : a3fvector.size());
-		if (pt3fvector.size() <= a3fvector.size())
-			std::transform(pt3fvector.cbegin(), pt3fvector.cend(), a3fvector.cbegin(), vtx6fvector.begin(),
-				[] (Point3f pt3f, Angle3f a3f) {
-					Vertex6f vtx6f;
-					vtx6f.point = pt3f;
-					vtx6f.angle = a3f;
-					return vtx6f;
-				});
-		else
-			std::transform(a3fvector.cbegin(), a3fvector.cend(), pt3fvector.cbegin(), vtx6fvector.begin(),
-				[] (Angle3f a3f, Point3f pt3f) {
-					Vertex6f vtx6f;
-					vtx6f.point = pt3f;
-					vtx6f.angle = a3f;
-					return vtx6f;
-				});
-		return vtx6fvector;
-	}
-
 	static inline void splitFromVertex6d(const std::vector<Vertex6d> & vtx6dvector, std::vector<Point3d> & pt3dvector, std::vector<Normal3d> & n3dvector)
 	{
 		if (!pt3dvector.empty())
@@ -244,31 +389,32 @@ public:
 		}
 	}
 
-	static inline void splitFromVertex6f(const std::vector<Vertex6f> & vtx6fvector, std::vector<Point3f> & pt3fvector, std::vector<Normal3f> & n3fvector)
+	static inline void splitFromVertex6d(const std::vector<Vertex6d> & vtx6dvector, Eigen::Matrix3Xd & position, Eigen::Matrix3Xd & orientation)
 	{
-		if (!pt3fvector.empty())
-			pt3fvector.clear();
-		if (!n3fvector.empty())
-			n3fvector.clear();
-		for (const auto & vertex : vtx6fvector)
+		std::vector<Point3d> pt3dvector;
+		std::vector<Point3d> a3dvector;
+		for (const auto & vertex : vtx6dvector)
 		{
-			pt3fvector.push_back(vertex.point);
-			n3fvector.push_back(vertex.normal);
+			pt3dvector.push_back(vertex.point);
+			a3dvector.push_back(Point3d{ vertex.angle.rx, vertex.angle.ry, vertex.angle.rz });
 		}
+		position = toMatrix3Xd(pt3dvector);
+		orientation = toMatrix3Xd(a3dvector);
 	}
 
-	static inline void splitFromVertex6f(const std::vector<Vertex6f> & vtx6fvector, std::vector<Point3f> & pt3fvector, std::vector<Angle3f> & a3fvector)
+	static inline void splitFromVertex6d(const std::vector<Vertex6d> & vtx6dvector, Eigen::MatrixX3d & position, Eigen::MatrixX3d & orientation)
 	{
-		if (!pt3fvector.empty())
-			pt3fvector.clear();
-		if (!a3fvector.empty())
-			a3fvector.clear();
-		for (const auto & vertex : vtx6fvector)
+		std::vector<Point3d> pt3dvector;
+		std::vector<Point3d> a3dvector;
+		for (const auto & vertex : vtx6dvector)
 		{
-			pt3fvector.push_back(vertex.point);
-			a3fvector.push_back(vertex.angle);
+			pt3dvector.push_back(vertex.point);
+			a3dvector.push_back(Point3d{ vertex.angle.rx, vertex.angle.ry, vertex.angle.rz });
 		}
+		position = toMatrixX3d(pt3dvector);
+		orientation = toMatrixX3d(a3dvector);
 	}
+#endif
 };
 
 // NOTE: Only very restricted subset of PLY file is implemented, e.g.
@@ -526,7 +672,10 @@ public:
 	{
 		static_assert(std::is_floating_point<T>::value, "only float and double types are supported");
 
-		std::ifstream fin(filename, std::ios::in | std::ios::binary);
+		// convert filename from UTF-8 string to UTF-16 wstring
+		std::wstring_convert<std::codecvt_utf8<wchar_t>> convert2wstring;
+		std::wstring wfilename = convert2wstring.from_bytes(filename);
+		std::ifstream fin(wfilename, std::ios::in | std::ios::binary);
 		if (!fin)
 			throw std::runtime_error("failed to open file " + filename + " to read");
 
@@ -560,42 +709,6 @@ public:
 	}
 
 	//-------------------------------------------------------------------------------------------------
-	// Specialized function to read double type vertex from PLY file into Point3d vector
-	// if normal or euler angle properties exists, they are ignored and not included in returned vector
-	//-------------------------------------------------------------------------------------------------
-	static std::vector<Point3d> readPlyToPoint3d(const std::string & filename, CloudMeta & meta)
-	{
-		std::vector<double> vertices = readPlyFile<double>(filename, meta);
-		if (vertices.empty() || (vertices.size() != (meta.vertex_size * 3) && vertices.size() != (meta.vertex_size * 6)))
-		{
-			std::ostringstream ssout;
-			ssout << "input file " << filename << " may not contain valid vertex data";
-			throw std::invalid_argument(ssout.str());
-		}
-
-		if (vertices.size() == (meta.vertex_size * 3))
-		{
-			// contain x, y, z points only, convert it to Point3d vector
-			// NOTE: it is considered dangerous to assume no hole for the bit layout of Point3d structure
-			std::vector<Point3d> pt3dvec(meta.vertex_size);
-			std::copy(vertices.begin(), vertices.end(), stdext::make_checked_array_iterator((double *)pt3dvec.data(), vertices.size()));
-			// move vector out of local scope
-			return pt3dvec;
-		}
-		else
-		{
-			// contain x, y, z points with nx, ny, nz normals or rx, ry, rz Euler angles
-			// normals and angles are all 3 double structure, skip one Point3d should do it
-			std::vector<Point3d> pt3dvec;
-			Point3d* ppt3d = (Point3d*)vertices.data();
-			for (uint32_t i = 0, end = meta.vertex_size * 2; i < end; i += 2)
-				pt3dvec.push_back(*(ppt3d + i));
-			// move vector out of local scope
-			return pt3dvec;
-		}
-	}
-
-	//-------------------------------------------------------------------------------------------------
 	// Specialized function to read float type vertex from PLY file into Point3f vector
 	// if normal or euler angle properties exists, they are ignored and not included in returned vector
 	//-------------------------------------------------------------------------------------------------
@@ -620,7 +733,7 @@ public:
 		else
 		{
 			// contain x, y, z points with nx, ny, nz normals or rx, ry, rz Euler angles
-			// normals and angles are all 3 float structure, skip one Point3f should do it
+			// normals and angles are all 3 float structure, advance pointer with one Point3f skipped should do it
 			std::vector<Point3f> pt3fvec;
 			Point3f* ppt3f = (Point3f*)vertices.data();
 			for (uint32_t i = 0, end = meta.vertex_size * 2; i < end; i += 2)
@@ -628,38 +741,6 @@ public:
 			return pt3fvec;
 		}
 		// move vector out of local scope
-	}
-
-	//-------------------------------------------------------------------------------------------
-	// Specialized function to read double type vertex from PLY file into Vertex6d vector
-	// if normal or euler angle properties are not exists, they are left with zero values
-	//-------------------------------------------------------------------------------------------
-	static std::vector<Vertex6d> readPlyToVertex6d(const std::string & filename, CloudMeta & meta)
-	{
-		std::vector<double> vertices = readPlyFile<double>(filename, meta);
-		if (vertices.empty() || (vertices.size() != (meta.vertex_size * 3) && vertices.size() != (meta.vertex_size * 6)))
-		{
-			std::ostringstream ssout;
-			ssout << "input file " << filename << " may not contain valid vertex data";
-			throw std::invalid_argument(ssout.str());
-		}
-
-		std::vector<Vertex6d> vtx6dvec(meta.vertex_size);
-		if (vertices.size() == (meta.vertex_size * 6))
-		{
-			// contain x, y, z points with nx, ny, nz normals or rx, ry, rz Euler angles
-			// NOTE: it is considered dangerous to assume no hole for the bit layout of Point3d structure
-			std::copy(vertices.begin(), vertices.end(), stdext::make_checked_array_iterator((double *)vtx6dvec.data(), vertices.size()));
-		}
-		else
-		{
-			// contain x, y, z points only, copy only to Point3d
-			Point3d* ppt3d = (Point3d*)vertices.data();
-			for (uint32_t i = 0; i < meta.vertex_size; ++i)
-				vtx6dvec[i] = { *(ppt3d + i) , { .0, .0, .0 } };
-		}
-		// move vector out of local scope
-		return vtx6dvec;
 	}
 
 	//-------------------------------------------------------------------------------------------
@@ -694,13 +775,12 @@ public:
 		return vtx6fvec;
 	}
 
-	//-------------------------------------------------------------------------------------------------
-	// Specialized function to read double type vertex from PLY file into Eigen::MatrixX3d
-	// if normal or euler angle properties exists, they are ignored and not included in returned mztrix
-	//-------------------------------------------------------------------------------------------------
-	static Eigen::MatrixX3d readPlyToMatrixX3d(const std::string & filename, CloudMeta & meta)
+	//-------------------------------------------------------------------------------------
+	// Specialized function to read float type vertex from PLY file into Eigen::Matrix3Xf
+	//-------------------------------------------------------------------------------------
+	static Eigen::Matrix3Xf readPlyToMatrix3Xf(const std::string & filename, CloudMeta & meta)
 	{
-		std::vector<double> vertices = readPlyFile<double>(filename, meta);
+		std::vector<float> vertices = readPlyFile<float>(filename, meta);
 		if (vertices.empty() || (vertices.size() != (meta.vertex_size * 3) && vertices.size() != (meta.vertex_size * 6)))
 		{
 			std::ostringstream ssout;
@@ -710,21 +790,23 @@ public:
 
 		if (vertices.size() == (meta.vertex_size * 3))
 		{
-			// contain x, y, z points only, mapping to Eigen::MatrixX3d
-			Eigen::Map<Eigen::Matrix<double, -1, 3, Eigen::RowMajor>> mat3d(vertices.data(), vertices.size() / 3, 3);
+			// mapping to Eigen::MatrixX3f
+			Eigen::Map<Eigen::Matrix<float, -1, 3, Eigen::RowMajor>> mat3f(vertices.data(), vertices.size() / 3, 3);
 			// move matrix out of local scope
-			return mat3d;
+			return mat3f.transpose();
 		}
 		else
 		{
 			// contain x, y, z points with nx, ny, nz normals or rx, ry, rz Euler angles
-			// normals and angles are all 3 double structure, skip one Point3d should do it
-			Eigen::MatrixX3d mat3d(meta.vertex_size, 3);
-			Point3d* ppt3d = (Point3d*)vertices.data();
-			for (uint32_t r = 0; r < meta.vertex_size; ++r, ppt3d += 2)
-				mat3d.row(r) << ppt3d->x, ppt3d->y, ppt3d->z;
-			// move vector out of local scope
-			return mat3d;
+			// normals and angles are all 3 double structure, advance pointer with one Point3f skipped should do it
+			Eigen::Matrix3Xf mat3f(3, meta.vertex_size);
+			Point3f* ppt3f = (Point3f*)vertices.data();
+			for (uint32_t c = 0; c < meta.vertex_size; ++c, ppt3f += 2)
+				mat3f.col(c) << ppt3f->x,
+								ppt3f->y,
+								ppt3f->z;
+			// move matrix out of local scope
+			return mat3f;
 		}
 	}
 
@@ -761,6 +843,146 @@ public:
 		}
 	}
 
+#if 1
+	//-------------------------------------------------------------------------------------------------
+	// Specialized function to read double type vertex from PLY file into Point3d vector
+	// if normal or euler angle properties exists, they are ignored and not included in returned vector
+	//-------------------------------------------------------------------------------------------------
+	static std::vector<Point3d> readPlyToPoint3d(const std::string & filename, CloudMeta & meta)
+	{
+		std::vector<double> vertices = readPlyFile<double>(filename, meta);
+		if (vertices.empty() || (vertices.size() != (meta.vertex_size * 3) && vertices.size() != (meta.vertex_size * 6)))
+		{
+			std::ostringstream ssout;
+			ssout << "input file " << filename << " may not contain valid vertex data";
+			throw std::invalid_argument(ssout.str());
+		}
+
+		if (vertices.size() == (meta.vertex_size * 3))
+		{
+			// contain x, y, z points only, convert it to Point3d vector
+			// NOTE: it is considered dangerous to assume no hole for the bit layout of Point3d structure
+			std::vector<Point3d> pt3dvec(meta.vertex_size);
+			std::copy(vertices.begin(), vertices.end(), stdext::make_checked_array_iterator((double *)pt3dvec.data(), vertices.size()));
+			// move vector out of local scope
+			return pt3dvec;
+		}
+		else
+		{
+			// contain x, y, z points with nx, ny, nz normals or rx, ry, rz Euler angles
+			// normals and angles are all 3 double structure, advance pointer with one Point3d skipped should do it
+			std::vector<Point3d> pt3dvec;
+			Point3d* ppt3d = (Point3d*)vertices.data();
+			for (uint32_t i = 0, end = meta.vertex_size * 2; i < end; i += 2)
+				pt3dvec.push_back(*(ppt3d + i));
+			// move vector out of local scope
+			return pt3dvec;
+		}
+	}
+
+	//-------------------------------------------------------------------------------------------
+	// Specialized function to read double type vertex from PLY file into Vertex6d vector
+	// if normal or euler angle properties are not exists, they are left with zero values
+	//-------------------------------------------------------------------------------------------
+	static std::vector<Vertex6d> readPlyToVertex6d(const std::string & filename, CloudMeta & meta)
+	{
+		std::vector<double> vertices = readPlyFile<double>(filename, meta);
+		if (vertices.empty() || (vertices.size() != (meta.vertex_size * 3) && vertices.size() != (meta.vertex_size * 6)))
+		{
+			std::ostringstream ssout;
+			ssout << "input file " << filename << " may not contain valid vertex data";
+			throw std::invalid_argument(ssout.str());
+		}
+
+		std::vector<Vertex6d> vtx6dvec(meta.vertex_size);
+		if (vertices.size() == (meta.vertex_size * 6))
+		{
+			// contain x, y, z points with nx, ny, nz normals or rx, ry, rz Euler angles
+			// NOTE: it is considered dangerous to assume no hole for the bit layout of Point3d structure
+			std::copy(vertices.begin(), vertices.end(), stdext::make_checked_array_iterator((double *)vtx6dvec.data(), vertices.size()));
+		}
+		else
+		{
+			// contain x, y, z points only, copy only to Point3d
+			Point3d* ppt3d = (Point3d*)vertices.data();
+			for (uint32_t i = 0; i < meta.vertex_size; ++i)
+				vtx6dvec[i] = { *(ppt3d + i) , { .0, .0, .0 } };
+		}
+		// move vector out of local scope
+		return vtx6dvec;
+	}
+
+	//-------------------------------------------------------------------------------------------------
+	// Specialized function to read double type vertex from PLY file into Eigen::Matrix3Xd
+	// if normal or euler angle properties exists, they are ignored and not included in returned mztrix
+	//-------------------------------------------------------------------------------------------------
+	static Eigen::Matrix3Xd readPlyToMatrix3Xd(const std::string & filename, CloudMeta & meta)
+	{
+		std::vector<double> vertices = readPlyFile<double>(filename, meta);
+		if (vertices.empty() || (vertices.size() != (meta.vertex_size * 3) && vertices.size() != (meta.vertex_size * 6)))
+		{
+			std::ostringstream ssout;
+			ssout << "input file " << filename << " may not contain valid vertex data";
+			throw std::invalid_argument(ssout.str());
+		}
+
+		if (vertices.size() == (meta.vertex_size * 3))
+		{
+			// contain x, y, z points only, mapping to Eigen::Matrix3Xd
+			Eigen::Map<Eigen::Matrix<double, -1, 3, Eigen::RowMajor>> mat3d(vertices.data(), vertices.size() / 3, 3);
+			// move matrix out of local scope
+			return mat3d.transpose();
+		}
+		else
+		{
+			// contain x, y, z points with nx, ny, nz normals or rx, ry, rz Euler angles
+			// normals and angles are all 3 double structure, advance pointer with one Point3d skipped should do it
+			Eigen::Matrix3Xd mat3d(3, meta.vertex_size);
+			Point3d* ppt3d = (Point3d*)vertices.data();
+			for (uint32_t c = 0; c < meta.vertex_size; ++c, ppt3d += 2)
+				mat3d.col(c) << ppt3d->x,
+								ppt3d->y,
+								ppt3d->z;
+			// move vector out of local scope
+			return mat3d;
+		}
+	}
+
+	//-------------------------------------------------------------------------------------------------
+	// Specialized function to read double type vertex from PLY file into Eigen::MatrixX3d
+	// if normal or euler angle properties exists, they are ignored and not included in returned mztrix
+	//-------------------------------------------------------------------------------------------------
+	static Eigen::MatrixX3d readPlyToMatrixX3d(const std::string & filename, CloudMeta & meta)
+	{
+		std::vector<double> vertices = readPlyFile<double>(filename, meta);
+		if (vertices.empty() || (vertices.size() != (meta.vertex_size * 3) && vertices.size() != (meta.vertex_size * 6)))
+		{
+			std::ostringstream ssout;
+			ssout << "input file " << filename << " may not contain valid vertex data";
+			throw std::invalid_argument(ssout.str());
+		}
+
+		if (vertices.size() == (meta.vertex_size * 3))
+		{
+			// contain x, y, z points only, mapping to Eigen::MatrixX3d
+			Eigen::Map<Eigen::Matrix<double, -1, 3, Eigen::RowMajor>> mat3d(vertices.data(), vertices.size() / 3, 3);
+			// move matrix out of local scope
+			return mat3d;
+		}
+		else
+		{
+			// contain x, y, z points with nx, ny, nz normals or rx, ry, rz Euler angles
+			// normals and angles are all 3 double structure, skip one Point3d should do it
+			Eigen::MatrixX3d mat3d(meta.vertex_size, 3);
+			Point3d* ppt3d = (Point3d*)vertices.data();
+			for (uint32_t r = 0; r < meta.vertex_size; ++r, ppt3d += 2)
+				mat3d.row(r) << ppt3d->x, ppt3d->y, ppt3d->z;
+			// move vector out of local scope
+			return mat3d;
+		}
+	}
+#endif
+
 	//-------------------------------------------------------------------------------------------------------
 	// Write vertex list from a float/double vector to a PLY file
 	// vertices in vector are continuouse and side-by-side { x1, y1, z1, x2, y2, z2, ... } 
@@ -772,7 +994,10 @@ public:
 	{
 		static_assert(std::is_floating_point<T>::value, "only float and double types are supported");
 
-		std::ofstream fout(filename, std::ios::out | std::ios::binary);
+		// convert filename from UTF-8 string to UTF-16 wstring
+		std::wstring_convert<std::codecvt_utf8<wchar_t>> convert2wstring;
+		std::wstring wfilename = convert2wstring.from_bytes(filename);
+		std::ofstream fout(wfilename, std::ios::out | std::ios::binary);
 		if (!fout)
 			throw std::runtime_error("failed to open file " + filename + " to write");
 
@@ -834,19 +1059,6 @@ public:
 	}
 
 	//-------------------------------------------------------------------------------------
-	// Specialized function to write Point3d vector to PLY file
-	// all elements of vector are points, no normal or angle is allowed
-	//-------------------------------------------------------------------------------------
-	static void writePoint3dToPly(const std::string & filename, CloudMeta & meta, std::vector<Point3d> & pt3vec, bool binary_format = true)
-	{
-		if (pt3vec.size() != meta.vertex_size)
-			throw std::invalid_argument("the size of vector is not the same with meta");
-		meta.euler_angle.clear();
-		std::vector<double> vertices((double *)pt3vec.data(), (double *)pt3vec.data() + (pt3vec.size() * 3));
-		writePlyFile<double>(filename, meta, std::move(vertices), binary_format);
-	}
-
-	//-------------------------------------------------------------------------------------
 	// Specialized function to write Point3f vector to PLY file
 	// all elements of vector are points, no normal or angle is allowed
 	//-------------------------------------------------------------------------------------
@@ -860,15 +1072,6 @@ public:
 	}
 
 	//-------------------------------------------------------------------------------------
-	// Specialized function to write Vertex6d vector to PLY file
-	//-------------------------------------------------------------------------------------
-	static void writeVertex6dToPly(const std::string & filename, CloudMeta & meta, std::vector<Vertex6d> & vtx3vec, bool binary_format = true)
-	{
-		std::vector<double> vertices((double *)vtx3vec.data(), (double *)vtx3vec.data() + (vtx3vec.size() * 6));
-		writePlyFile<double>(filename, meta, std::move(vertices), binary_format);
-	}
-
-	//-------------------------------------------------------------------------------------
 	// Specialized function to write Vertex6f vector to PLY file
 	//-------------------------------------------------------------------------------------
 	static void writeVertex6fToPly(const std::string & filename, CloudMeta & meta, std::vector<Vertex6f> & vtx3vec, bool binary_format = true)
@@ -877,13 +1080,58 @@ public:
 		writePlyFile<float>(filename, meta, std::move(vertices), binary_format);
 	}
 
+#if 1
+	//-------------------------------------------------------------------------------------
+	// Specialized function to write Point3d vector to PLY file
+	// all elements of vector are points, no normal or angle is allowed
+	//-------------------------------------------------------------------------------------
+	static void writePoint3dToPly(const std::string & filename, CloudMeta & meta, std::vector<Point3d> & pt3vec, bool binary_format = true)
+	{
+		if (pt3vec.size() != meta.vertex_size)
+			throw std::invalid_argument("the size of vector is not the same with meta");
+		meta.euler_angle.clear();
+		std::vector<double> vertices((double *)pt3vec.data(), (double *)pt3vec.data() + (pt3vec.size() * 3));
+		writePlyFile<double>(filename, meta, std::move(vertices), binary_format);
+	}
+
+	//-------------------------------------------------------------------------------------
+	// Specialized function to write Vertex6d vector to PLY file
+	//-------------------------------------------------------------------------------------
+	static void writeVertex6dToPly(const std::string & filename, CloudMeta & meta, std::vector<Vertex6d> & vtx3vec, bool binary_format = true)
+	{
+		std::vector<double> vertices((double *)vtx3vec.data(), (double *)vtx3vec.data() + (vtx3vec.size() * 6));
+		writePlyFile<double>(filename, meta, std::move(vertices), binary_format);
+	}
+#endif
+
+	//-------------------------------------------------------------------------------------
+	// Specialized function to write Eigen::Matrix3Xd to PLY file
+	//-------------------------------------------------------------------------------------
+	static void writeMatrix3XdToPly(const std::string & filename, CloudMeta & meta, Eigen::Matrix3Xd & mat3d, bool binary_format = true)
+	{
+		if (mat3d.cols() != meta.vertex_size)
+			throw std::invalid_argument("the number of cols is not the same with vertex size");
+
+		std::vector<double> vertices(mat3d.size());
+		if (mat3d.IsRowMajor)
+		{
+			Eigen::Matrix<double, 3, -1, Eigen::ColMajor> mat3d_colmajor = mat3d;
+			std::copy(mat3d_colmajor.data(), mat3d_colmajor.data() + mat3d_colmajor.size(), vertices.begin());
+		}
+		else
+		{
+			std::copy(mat3d.data(), mat3d.data() + mat3d.size(), vertices.begin());
+		}
+		writePlyFile<double>(filename, meta, std::move(vertices), binary_format);
+	}
+
 	//-------------------------------------------------------------------------------------
 	// Specialized function to write Eigen::MatrixX3d to PLY file
 	//-------------------------------------------------------------------------------------
 	static void writeMatrixX3dToPly(const std::string & filename, CloudMeta & meta, Eigen::MatrixX3d & mat3d, bool binary_format = true)
 	{
 		if (mat3d.rows() != meta.vertex_size)
-			throw std::invalid_argument("the number of row is not the same with meta");
+			throw std::invalid_argument("the number of row is not the same with vertex size");
 
 		std::vector<double> vertices(mat3d.size());
 		if (mat3d.IsRowMajor)
@@ -899,12 +1147,33 @@ public:
 	}
 
 	//-------------------------------------------------------------------------------------
+	// Specialized function to write Eigen::Matrix3Xf to PLY file
+	//-------------------------------------------------------------------------------------
+	static void writeMatrix3XfToPly(const std::string & filename, CloudMeta & meta, Eigen::Matrix3Xf & mat3d, bool binary_format = true)
+	{
+		if (mat3d.cols() != meta.vertex_size)
+			throw std::invalid_argument("the number of cols is not the same with vertex size");
+
+		std::vector<float> vertices(mat3d.size());
+		if (mat3d.IsRowMajor)
+		{
+			Eigen::Matrix<float, 3, -1, Eigen::ColMajor> mat3d_colmajor = mat3d;
+			std::copy(mat3d_colmajor.data(), mat3d_colmajor.data() + mat3d_colmajor.size(), vertices.begin());
+		}
+		else
+		{
+			std::copy(mat3d.data(), mat3d.data() + mat3d.size(), vertices.begin());
+		}
+		writePlyFile<float>(filename, meta, std::move(vertices), binary_format);
+	}
+
+	//-------------------------------------------------------------------------------------
 	// Specialized function to write Eigen::MatrixX3f to PLY file
 	//-------------------------------------------------------------------------------------
 	static void writeMatrixX3fToPly(const std::string & filename, CloudMeta & meta, Eigen::MatrixX3f & mat3d, bool binary_format = true)
 	{
 		if (mat3d.rows() != meta.vertex_size)
-			throw std::invalid_argument("the number of row is not the same with meta");
+			throw std::invalid_argument("the number of row is not the same with vertex size");
 
 		std::vector<float> vertices(mat3d.size());
 		if (mat3d.IsRowMajor)
@@ -920,6 +1189,7 @@ public:
 	}
 };
 
+#if 1
 class XyzFile
 {
 private:
@@ -976,7 +1246,10 @@ public:
 	{
 		static_assert(std::is_floating_point<T>::value, "only float and double types are supported");
 
-		std::ifstream fin(filename, std::ios::in | std::ios::binary);
+		// convert filename from UTF-8 string to UTF-16 wstring
+		std::wstring_convert<std::codecvt_utf8<wchar_t>> convert2wstring;
+		std::wstring wfilename = convert2wstring.from_bytes(filename);
+		std::ifstream fin(wfilename, std::ios::in | std::ios::binary);
 		if (!fin)
 			throw std::runtime_error("failed to open file " + filename + " to read");
 
@@ -1008,7 +1281,7 @@ public:
 
 		if (!isHeaderOk)
 		{
-			meta.vertex_size = vertices.size() / 3;
+			meta.vertex_size = (uint32_t)(vertices.size() / 3);
 			meta.grid_width = meta.vertex_size;
 			meta.grid_length = (meta.vertex_size > meta.grid_width) ? meta.vertex_size / meta.grid_width : 1;
 		}
@@ -1101,3 +1374,4 @@ public:
 		return mat3f;
 	}
 };
+#endif

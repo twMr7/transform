@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="data">
+      <UniqueIdentifier>{01c4e71c-46f5-4792-82b7-bd2c73be2de7}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AppTransform.cpp">
@@ -32,5 +35,26 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="transform.ini" />
+    <None Include="data\source.matrix">
+      <Filter>data</Filter>
+    </None>
+    <None Include="data\target.matrix">
+      <Filter>data</Filter>
+    </None>
+    <None Include="data\affine.matrix">
+      <Filter>data</Filter>
+    </None>
+    <None Include="data\rotation.matrix">
+      <Filter>data</Filter>
+    </None>
+    <None Include="data\rxryrz.matrix">
+      <Filter>data</Filter>
+    </None>
+    <None Include="data\scale.matrix">
+      <Filter>data</Filter>
+    </None>
+    <None Include="data\translate.matrix">
+      <Filter>data</Filter>
+    </None>
   </ItemGroup>
 </Project>
