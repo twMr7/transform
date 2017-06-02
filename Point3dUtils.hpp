@@ -5,8 +5,6 @@
 		Utility functions to manipulate Point3d data, including
 		* Point3d vector and Eigen::MatrixX3d converter
 		* read/write vertex list from/to PLY file
-	Copyright:
-		Orisol Asia Ltd.
 */
 #pragma once
 #include <cstdint>
