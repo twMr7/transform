@@ -167,6 +167,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="data\affine.matrix" />
+    <None Include="data\identity.matrix" />
     <None Include="data\rotation.matrix" />
     <None Include="data\rxryrz.matrix" />
     <None Include="data\scale.matrix" />

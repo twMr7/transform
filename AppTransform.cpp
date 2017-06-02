@@ -46,7 +46,7 @@ void AppTransform::handleOptionHelp(const string & option, const string & argume
 	HelpFormatter helpFormatter(options());
 	helpFormatter.setCommand(commandName());
 	helpFormatter.setUsage("OPTIONS");
-	helpFormatter.setHeader("Spatial transform a set of points, angle, or transform matrix estimation from 2 sets of point");
+	helpFormatter.setHeader("Spatial transform a set of points, Euler angles, or transform matrix estimation from 2 sets of point");
 	helpFormatter.format(std::cout);
 	// stop further processing
 	stopOptionsProcessing();
@@ -83,7 +83,7 @@ void AppTransform::defineOptions(Poco::Util::OptionSet & options)
 		<< "'display' - display SOURCE or TRANSFORM matrix information\n"
 		<< "'estimate' - estimate TRANSFORM from SOURCE to TARGET\n"
 		<< "'build' - build transform matrix from LINEAR, ROTATION, TRANSLATION, and SCALING\n"
-		<< "'transform' - apply TRANSFORM matrix on SOURCE and ANGLE matrix (.matrix or .ply)\n";
+		<< "'apply' - apply TRANSFORM matrix on SOURCE and ANGLE matrix (.matrix or .ply)\n";
 	// This option assign argument directly to configuration "application.action".
 	options.addOption(
 		Option("@ction", "@", optstrs.str())
@@ -158,10 +158,9 @@ void AppTransform::defineOptions(Poco::Util::OptionSet & options)
 
 	// This option assign argument directly to configuration "application.build.order".
 	optstrs.str("");
-	optstrs.seekp(0);
 	optstrs << "(/o) the order to build or apply transformation matrix.\n"
-		<< "*Build* order example: 'rIst', where I is the identity matrix. The option LINEAR matrix, if present, is always applied first to the identity."
-		<< "*Apply* order example: 'xI' to apply xform on the left, and 'Ix' to apply xform on the right.";
+		<< "*Build* order example: 'rIst', where I is the identity matrix. The option LINEAR matrix, if present, is always applied first to the identity.\n"
+		<< "*Apply* order example: 'xI' to apply xform on the left, and 'Ix' to apply xform on the right.\n";
 	options.addOption(
 		Option("order", "o", optstrs.str())
 		.required(false)
@@ -214,7 +213,6 @@ int AppTransform::main(const ArgVec & args)
 	if (_helpRequested)
 		return Application::EXIT_USAGE;
 
-	string action = config().getString("application.action", "");
 	string sourceMatrix = config().getString("application.source.matrix", "");
 	string sourcePly = config().getString("application.source.ply", "");
 	string targetMatrix = config().getString("application.target.matrix", "");
@@ -223,13 +221,20 @@ int AppTransform::main(const ArgVec & args)
 	string angleMatrix = config().getString("application.angle.matrix", "");
 	string translateMatrix = config().getString("application.translation.matrix", "");
 	string scalingMatrix = config().getString("application.scaling.matrix", "");
+
 	string xformOrder = config().getString("application.transform.order", "I");
+	// convert xform order string to all upper case
+	std::transform(xformOrder.begin(), xformOrder.end(), xformOrder.begin(), [](char c) { return std::toupper(c, std::locale::classic()); });
+
+	string action = config().getString("application.action", "");
+	// convert action string to all upper case
+	std::transform(action.begin(), action.end(), action.begin(), [](char c) { return std::toupper(c, std::locale::classic()); });
 
 	//----------------------------------------------------------------------------
 	// display data or certain transformation information
 	// Note: targetMatrix is not used on display action
 	//----------------------------------------------------------------------------
-	if (action == "display")
+	if (action == "DISPLAY")
 	{
 		//----------------------------------------------------------------------------
 		// display available information about TRANSFORM matrix
@@ -313,7 +318,7 @@ int AppTransform::main(const ArgVec & args)
 	// Transform matrix estimation using umeyama
 	// Note: both SOURCE and TARGET are read from .matrix file
 	//----------------------------------------------------------------------------
-	else if (action == "estimate")
+	else if (action == "ESTIMATE")
 	{
 		if (sourceMatrix.empty() || targetMatrix.empty())
 			throw std::invalid_argument("SOURCE and TARGET matrix must not be empty");
@@ -344,7 +349,7 @@ int AppTransform::main(const ArgVec & args)
 	//-------------------------------------------------------------------------------------------------
 	// display the transform matrix built from combination of ROTATION, ANGLE, TRANSLATION, and SCALING
 	//-------------------------------------------------------------------------------------------------
-	else if (action == "build")
+	else if (action == "BUILD")
 	{
 		// transformation matrix is 4 x 4 matrix
 		Eigen::Affine3d xform(Eigen::Affine3d::Identity());
@@ -363,7 +368,7 @@ int AppTransform::main(const ArgVec & args)
 			}
 
 			// rotation matrix
-			Eigen::Matrix3d xRotate;
+			Eigen::Quaterniond xRotate;
 			if (!angleMatrix.empty())
 			{
 				Eigen::MatrixXd matAngle = loadMatrix<double>(angleMatrix);
@@ -376,7 +381,7 @@ int AppTransform::main(const ArgVec & args)
 			}
 			else
 			{
-				xRotate = Eigen::Matrix3d::Identity();
+				xRotate.setIdentity();
 			}
 
 			// scaling matrix
@@ -411,10 +416,8 @@ int AppTransform::main(const ArgVec & args)
 				xTranslate = Eigen::Vector3d::Zero();
 			}
 
-			// convert build order string to all upper case
-			std::transform(xformOrder.begin(), xformOrder.end(), xformOrder.begin(), [](char c) { return std::toupper(c, std::locale::classic()); });
 			string::size_type idxI = xformOrder.find("I");
-			if (idxI != string::npos)
+			if (idxI != string::npos && xformOrder != "I")
 			{
 				int idxCode = (int)idxI;
 				// to the left
@@ -424,7 +427,7 @@ int AppTransform::main(const ArgVec & args)
 					{
 						//xform = xRotate * xform;
 						xform.prerotate(xRotate);
-						ostrs << "--- >>> Pre-ROTATE:\n" << xRotate << "\n";
+						ostrs << "--- >>> Pre-ROTATE:\n" << xRotate.toRotationMatrix() << "\n";
 					}
 					else if (xformOrder.at(idxCode) == 'S')
 					{
@@ -447,7 +450,7 @@ int AppTransform::main(const ArgVec & args)
 					{
 						//xform *= xRotate;
 						xform.rotate(xRotate);
-						ostrs << "--- >>> ROTATE:\n" << xRotate << "\n";
+						ostrs << "--- >>> ROTATE:\n" << xRotate.toRotationMatrix() << "\n";
 					}
 					else if (xformOrder.at(idxCode) == 'S')
 					{
@@ -467,7 +470,7 @@ int AppTransform::main(const ArgVec & args)
 			{
 				// xform.prerotate(xRotate).scale(xScale).translate(xTranslate);
 				xform.prerotate(xRotate);
-				ostrs << "--- >>> Pre-ROTATE:\n" << xRotate << "\n";
+				ostrs << "--- >>> Pre-ROTATE:\n" << xRotate.toRotationMatrix() << "\n";
 				xform.scale(xScale);
 				ostrs << "--- >>> SCALE:\n" << xScale << "\n";
 				xform.translate(xTranslate);
@@ -479,6 +482,7 @@ int AppTransform::main(const ArgVec & args)
 			poco_error(logger(), string(e.what()));
 			return Application::EXIT_DATAERR;
 		}
+		xform.matrix() = (xform.matrix().array().abs() < (10000 * std::numeric_limits<double>::epsilon())).select(.0, xform.matrix());
 		ostrs << "=== >>> result TRANSFORM matrix:\n" << xform.matrix() << "\n"
 			<< "=== >>> Affine part:\n" << xform.affine() << "\n"
 			<< "=== >>> Rotation part:\n" << xform.rotation() << "\n"
@@ -490,8 +494,10 @@ int AppTransform::main(const ArgVec & args)
 	// Apply transform matrix to source matrix
 	// Note: SOURCE matrix can be read from .matrix or .ply file
 	//----------------------------------------------------------------------------
-	else if (action == "transform")
+	else if (action == "APPLY")
 	{
+		bool isXformLeft = (xformOrder != "IX") ? true : false;
+
 		// affine transformation is 4 x 4 matrix
 		Eigen::Affine3d matXform;
 		if (!xformMatrix.empty() && File(xformMatrix).exists())
@@ -520,10 +526,6 @@ int AppTransform::main(const ArgVec & args)
 				poco_error(logger(), format("file %s does not exist", xformMatrix));
 			return Application::EXIT_NOINPUT;
 		}
-
-		// convert build order string to all upper case
-		std::transform(xformOrder.begin(), xformOrder.end(), xformOrder.begin(), [](char c) { return std::toupper(c, std::locale::classic()); });
-		bool isXformLeft = (xformOrder != "IX") ? true : false;
 
 		// load SOURCE and ANGLE matrix from .matrix or .ply
 		Eigen::MatrixXd matSource;
@@ -607,13 +609,43 @@ int AppTransform::main(const ArgVec & args)
 			// transform the axis angles
 			for (uint32_t i = 0; i < matAngle.cols(); ++i)
 			{
-				Eigen::Matrix3d xRotate(Eigen::AngleAxisd(matAngle.col(i).z() * EIGEN_PI / 180, Eigen::Vector3d::UnitZ())
+				Eigen::Quaterniond xRotate(Eigen::AngleAxisd(matAngle.col(i).z() * EIGEN_PI / 180, Eigen::Vector3d::UnitZ())
 					* Eigen::AngleAxisd(matAngle.col(i).y() * EIGEN_PI / 180, Eigen::Vector3d::UnitY())
 					* Eigen::AngleAxisd(matAngle.col(i).x() * EIGEN_PI / 180, Eigen::Vector3d::UnitX()));
-				xRotate = matXform.rotation() * xRotate;
-				matAngle.col(i) = xRotate.eulerAngles(1, 0, 2) * 180 / EIGEN_PI;
+				//std::cout << "\nQuaternion:\n" << xRotate.coeffs() << std::endl;
+				xRotate = Eigen::Quaterniond(matXform.linear().inverse().transpose()) * xRotate;
+				matAngle.col(i) = xRotate.toRotationMatrix().eulerAngles(0, 1, 2) * 180 / EIGEN_PI;
 			}
 			std::cout << "### Xform.ROTATION*ANGLE result:\n" << matAngle << "\n" << std::endl;
+		}
+		else
+		{
+			if (matSource.cols() != matXform.cols() - 1)
+			{
+				poco_error(logger(), "the dimension of source and transform matrix is not multipliable");
+				return Application::EXIT_DATAERR;
+			}
+			// transform the coordinate matrix
+			Eigen::MatrixXd resultMatrix = matSource.rowwise().homogeneous() * matXform.matrix().transpose();
+			// output the matrix without homogeneous coefficients
+			std::cout << "### SOURCE*Xform result:\n" << resultMatrix.block(0, 0, matSource.rows(), matSource.cols()) << "\n" << std::endl;
+
+			if (matAngle.cols() != 3)
+			{
+				poco_error(logger(), "the dimension of angle matrix is not as expected");
+				return Application::EXIT_DATAERR;
+			}
+			// transform the axis angles
+			for (uint32_t i = 0; i < matAngle.rows(); ++i)
+			{
+				Eigen::Quaterniond xRotate(Eigen::AngleAxisd(matAngle.row(i).z() * EIGEN_PI / 180, Eigen::Vector3d::UnitZ())
+					* Eigen::AngleAxisd(matAngle.row(i).y() * EIGEN_PI / 180, Eigen::Vector3d::UnitY())
+					* Eigen::AngleAxisd(matAngle.row(i).x() * EIGEN_PI / 180, Eigen::Vector3d::UnitX()));
+				//std::cout << "\nQuaternion:\n" << xRotate.coeffs() << std::endl;
+				xRotate = xRotate * Eigen::Quaterniond(matXform.linear().inverse().transpose());
+				matAngle.row(i) = xRotate.toRotationMatrix().eulerAngles(0, 1, 2) * 180 / EIGEN_PI;
+			}
+			std::cout << "### ANGLE*Xform.ROTATION result:\n" << matAngle << "\n" << std::endl;
 		}
 	}
 	else
