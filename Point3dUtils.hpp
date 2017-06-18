@@ -81,7 +81,6 @@ struct Vertex6d
 };
 #endif
 
-// Metadata specific for Orisol's use of point cloud
 // besides scan raw data, it is not necessary to be in the form of grid
 struct CloudMeta
 {
@@ -1008,7 +1007,7 @@ public:
 		std::ostringstream header;
 		header << "ply\n"
 			<< "format " << ((binary_format) ? "binary_little_endian" : "ascii") << " 1.0\n"
-			<< "comment Point Cloud (Orisol Asia Ltd.)\n"
+			<< "comment Point Cloud\n"
 			<< "element vertex " << meta.vertex_size << "\n";
 		if (!meta.datetime.empty())
 			header << "comment datetime " << meta.datetime << "\n";
@@ -1147,43 +1146,115 @@ public:
 	//-------------------------------------------------------------------------------------
 	// Specialized function to write Eigen::Matrix3Xf to PLY file
 	//-------------------------------------------------------------------------------------
-	static void writeMatrix3XfToPly(const std::string & filename, CloudMeta & meta, Eigen::Matrix3Xf & mat3d, bool binary_format = true)
+	static void writeMatrix3XfToPly(const std::string & filename, CloudMeta & meta, Eigen::Matrix3Xf & mat3f, bool binary_format = true)
 	{
-		if (mat3d.cols() != meta.vertex_size)
+		if (mat3f.cols() != meta.vertex_size)
 			throw std::invalid_argument("the number of cols is not the same with vertex size");
 
-		std::vector<float> vertices(mat3d.size());
-		if (mat3d.IsRowMajor)
+		std::vector<float> vertices(mat3f.size());
+		if (mat3f.IsRowMajor)
 		{
-			Eigen::Matrix<float, 3, -1, Eigen::ColMajor> mat3d_colmajor = mat3d;
-			std::copy(mat3d_colmajor.data(), mat3d_colmajor.data() + mat3d_colmajor.size(), vertices.begin());
+			Eigen::Matrix<float, 3, -1, Eigen::ColMajor> mat3f_colmajor = mat3f;
+			std::copy(mat3f_colmajor.data(), mat3f_colmajor.data() + mat3f_colmajor.size(), vertices.begin());
 		}
 		else
 		{
-			std::copy(mat3d.data(), mat3d.data() + mat3d.size(), vertices.begin());
+			std::copy(mat3f.data(), mat3f.data() + mat3f.size(), vertices.begin());
 		}
 		writePlyFile<float>(filename, meta, std::move(vertices), binary_format);
 	}
 
 	//-------------------------------------------------------------------------------------
+	// Specialized function to write Eigen::Matrix3Xf to PLY file from Matrix3Xd
+	//-------------------------------------------------------------------------------------
+	static void writeMatrix3XfToPly(const std::string & filename, CloudMeta & meta, Eigen::Matrix3Xd & mat3d, bool binary_format = true)
+	{
+		Eigen::Matrix3Xf mat3f = mat3d.cast<float>();
+		writeMatrix3XfToPly(filename, meta, mat3f, binary_format);
+	}
+
+	//-------------------------------------------------------------------------------------
 	// Specialized function to write Eigen::MatrixX3f to PLY file
 	//-------------------------------------------------------------------------------------
-	static void writeMatrixX3fToPly(const std::string & filename, CloudMeta & meta, Eigen::MatrixX3f & mat3d, bool binary_format = true)
+	static void writeMatrixX3fToPly(const std::string & filename, CloudMeta & meta, Eigen::MatrixX3f & mat3f, bool binary_format = true)
 	{
-		if (mat3d.rows() != meta.vertex_size)
+		if (mat3f.rows() != meta.vertex_size)
 			throw std::invalid_argument("the number of row is not the same with vertex size");
 
-		std::vector<float> vertices(mat3d.size());
-		if (mat3d.IsRowMajor)
+		std::vector<float> vertices(mat3f.size());
+		if (mat3f.IsRowMajor)
 		{
-			std::copy(mat3d.data(), mat3d.data() + mat3d.size(), vertices.begin());
+			std::copy(mat3f.data(), mat3f.data() + mat3f.size(), vertices.begin());
 		}
 		else
 		{
-			Eigen::Matrix<float, -1, 3, Eigen::RowMajor> mat3d_rowmajor = mat3d;
-			std::copy(mat3d_rowmajor.data(), mat3d_rowmajor.data() + mat3d_rowmajor.size(), vertices.begin());
+			Eigen::Matrix<float, -1, 3, Eigen::RowMajor> mat3f_rowmajor = mat3f;
+			std::copy(mat3f_rowmajor.data(), mat3f_rowmajor.data() + mat3f_rowmajor.size(), vertices.begin());
 		}
 		writePlyFile<float>(filename, meta, std::move(vertices), binary_format);
+	}
+
+	//-------------------------------------------------------------------------------------
+	// Specialized function to write Eigen::MatrixX3f to PLY file from MatrixX3d
+	//-------------------------------------------------------------------------------------
+	static void writeMatrixX3fToPly(const std::string & filename, CloudMeta & meta, Eigen::MatrixX3d & mat3d, bool binary_format = true)
+	{
+		Eigen::MatrixX3f mat3f = mat3d.cast<float>();
+		writeMatrixX3fToPly(filename, meta, mat3f, binary_format);
+	}
+
+	//-------------------------------------------------------------------------------------
+	// Specialized function to write vector of Eigen::MatrixX3f to PLY file
+	// Note: the size info in meta will be changed, and the grid form become linear
+	//-------------------------------------------------------------------------------------
+	static void writeMatrixX3fToPly(const std::string & filename, CloudMeta & meta, std::vector<Eigen::MatrixX3f> & mat3f, bool binary_format = true)
+	{
+		// calculate the size of the new matrix
+		uint32_t cols = 3;
+		uint32_t rows = 0;
+		for (const auto & mat : mat3f)
+			rows += (uint32_t)mat.rows();
+		meta.vertex_size = rows;
+		meta.grid_width = rows;
+		meta.grid_length = 1;
+
+		// merge into a new matrix
+		Eigen::MatrixX3f matMerged(rows, cols);
+		uint32_t startrow = 0;
+		uint32_t startcol = 0;
+		for (const auto & mat : mat3f)
+		{
+			matMerged.block(startrow, startcol, mat.rows(), mat.cols()) = mat;
+			startrow += (uint32_t)mat.rows();
+			startcol += (uint32_t)mat.cols();
+		}
+		writeMatrixX3fToPly(filename, meta, matMerged, binary_format);
+	}
+
+	//-------------------------------------------------------------------------------------
+	// Specialized function to write vector of Eigen::MatrixX3d to PLY file
+	// Note: the size info in meta will be changed, and the grid form become linear
+	//-------------------------------------------------------------------------------------
+	static void writeMatrixX3fToPly(const std::string & filename, CloudMeta & meta, std::vector<Eigen::MatrixX3d> & mat3d, bool binary_format = true)
+	{
+		// calculate the size of the new matrix
+		uint32_t cols = 3;
+		uint32_t rows = 0;
+		for (const auto & mat : mat3d)
+			rows += (uint32_t)mat.rows();
+		meta.vertex_size = rows;
+		meta.grid_width = rows;
+		meta.grid_length = 1;
+
+		// merge into a new matrix
+		Eigen::MatrixX3f matMerged(rows, cols);
+		uint32_t startrow = 0;
+		for (const auto & mat : mat3d)
+		{
+			matMerged.block(startrow, 0, mat.rows(), cols) = mat.cast<float>();
+			startrow += (uint32_t)mat.rows();
+		}
+		writeMatrixX3fToPly(filename, meta, matMerged, binary_format);
 	}
 };
 
